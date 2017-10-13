@@ -1,4 +1,7 @@
-## Welcome to GitHub Pages
+## Welcome
+
+Currently, this site is just a home for a presentation I gave at the [PDXScala Meetup](https://www.meetup.com/PDXScala/) on 
+17 October, 2017.
 
 You can use the [editor on GitHub](https://github.com/toddburnside/toddburnside.github.io/edit/master/README.md) to maintain and preview the content for your website in Markdown files.
 
