@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Higher Kinded Types</title>
+    <meta charset="utf-8">
+    <style>
+      @import url(https://fonts.googleapis.com/css?family=Yanone+Kaffeesatz);
+      @import url(https://fonts.googleapis.com/css?family=Droid+Serif:400,700,400italic);
+      @import url(https://fonts.googleapis.com/css?family=Ubuntu+Mono:400,700,400italic);
+
+      body { font-family: 'Droid Serif', 'Helvetica'; }
+      h1, h2, h3 {
+        font-family: 'Yanone Kaffeesatz', 'Gill Sans';
+        font-weight: normal;
+      }
+      /*.remark-code, .remark-inline-code { font-family: 'Ubuntu Mono', 'Consolas', 'Courier New'; }*/
+    </style>
+  </head>
+  <body>
+  <textarea id="source">
+
+class: center, middle
+
+<h1>Higher Kinded Types?<br>Why Should I Care?</h1>
+
+Todd Burnside
+
+17 October 2017
+
+PDXScala
+
+???
+
+Today I'm going to talk about what Higher Kinded Types are.
+
+At first glance, HKTs seem a bit esoteric, and of interest only to advanced practioners of the dark arts.
+But, it turns out they solve some programming issues quite nicely. So, we're going to build up an example
+where a problem manifests itself, then see how HKTs solve the problem.
+
+---
+
+# Maybe?
+
+A data type similar to Scala's Option type.
+
+```scala
+sealed trait Maybe[+A]
+case class Yes[A](a: A) extends Maybe[A]
+case object No extends Maybe[Nothing]
+```
+???
+Maybe is Haskell's equivalent for Option. Or, vice versa.
+
+---
+
+#Maybe?
+
+```scala
+object M {
+  sealed trait Maybe[+A] {
+    def map[B](f: A => B): Maybe[B] = this match {
+      case Yes(a) => Yes(f(a))
+      case No => No: Maybe[B]
+    }
+
+    def fproduct[B](f: A => B): Maybe[(A, B)] =
+      map(a => (a, f(a)))
+
+    def getOrElse[AA >: A](aa: AA): AA = this match {
+      case Yes(a) => a
+      case No => aa
+    }
+  }
+
+  case class Yes[A](a: A) extends Maybe[A]
+  case object No extends Maybe[Nothing]
+}
+```
+
+???
+Let's add a couple methods...
+The enclosing object is just to satisfy the REPL. The slideshow uses tut to ensure that the code is correct...
+---
+#Yes?
+
+```scala
+scala> import M._
+import M._
+
+scala> val y = Yes(4)
+y: M.Yes[Int] = Yes(4)
+
+scala> y.map(_ + 2)
+res0: M.Maybe[Int] = Yes(6)
+
+scala> y.fproduct(_ * 3)
+res1: M.Maybe[(Int, Int)] = Yes((4,12))
+
+scala> y.getOrElse(7)
+res2: Int = 4
+```
+???
+Now we can use it as expected.
+
+---
+#No
+
+```scala
+scala> val n: Maybe[String] = No
+n: M.Maybe[String] = No
+
+scala> n.map(_.length)
+res3: M.Maybe[Int] = No
+
+scala> n.fproduct(_ + "!")
+res4: M.Maybe[(String, String)] = No
+
+scala> n.getOrElse("else")
+res5: String = else
+```
+
+---
+#Cons List
+
+```scala
+object L {
+  sealed trait CList[+A] {
+    def map[B](f: A => B): CList[B] = this match {
+      case Nil => Nil
+      case Cons(head, tail) => Cons(f(head), tail.map(f))
+    }
+
+    def fproduct[B](f: A => B): CList[(A, B)] =
+      map(a => (a, f(a)))
+  }
+
+  case object Nil extends CList[Nothing]
+  case class Cons[A](head: A, tail: CList[A]) extends CList[A]
+}
+```
+???
+A List superficially similar to List in the Scala std library.
+
+Yes, I know this is a naive implementation of map and is not
+stack safe, but it's simple.
+---
+#Cons List
+
+```scala
+scala> import L._
+import L._
+
+scala> val l = Cons("foo", Cons("foobar", Cons("baz", Nil)))
+l: L.Cons[String] = Cons(foo,Cons(foobar,Cons(baz,Nil)))
+
+scala> l.map(_ + "!")
+res6: L.CList[String] = Cons(foo!,Cons(foobar!,Cons(baz!,Nil)))
+
+scala> l.fproduct(_.length)
+res7: L.CList[(String, Int)] = Cons((foo,3),Cons((foobar,6),Cons((baz,3),Nil)))
+
+scala> val n: CList[String] = Nil
+n: L.CList[String] = Nil
+
+scala> n.map(_.length)
+res8: L.CList[Int] = Nil
+```
+---
+#Maybe
+
+```scala
+def map[B](f: A => B): Maybe[B] = this match {
+  case Yes(a) => Yes(f(a))
+  case No => No: Maybe[B]
+}
+
+def fproduct[B](f: A => B): Maybe[(A, B)] =
+  map(a => (a, f(a)))
+```
+#CList
+```scala
+def map[B](f: A => B): CList[B] = this match {
+  case Nil => Nil
+  case Cons(head, tail) => Cons(f(head), tail.map(f))
+}
+
+def fproduct[B](f: A => B): CList[(A, B)] =
+  map(a => (a, f(a)))
+```
+???
+After implementing these, we notice some similarities...Both have
+a map method, and an fproduct defined in terms of map.
+
+As good programmers, we want to abstract over this.
+As good OO programmers, we know exactly what to do.
+---
+#Inheritance
+
+```scala
+trait Functor[+A] {
+  def map[B](f: A => B): Functor[B]
+
+  def fproduct[B](f: A => B) = map(a => (a, f(a)))
+}
+```
+???
+We've been reading a bit about functional programming, and
+recognize this as something called a Functor, so...
+--
+
+```scala
+object M {
+  sealed trait Maybe[+A] extends Functor[A] {
+    def map[B](f: A => B) = this match {
+      case No => No
+      case Yes(a) => Yes(f(a))
+    }
+
+    def getOrElse[AA >: A](aa: AA): AA = this match {
+      case Yes(a) => a
+      case No => aa
+    }
+  }
+
+  case object No extends Maybe[Nothing]
+  case class Yes[A](a: A) extends Maybe[A]
+}
+```
+???
+Here's our Maybe implementation.
+
+#Problem 1: It's invasive.
+
+We couldn't use our existing implementation, we had
+to extend our Funtor trait.
+
+---
+#Using It
+
+```scala
+scala> import M._
+import M._
+
+scala> val m = Yes("yes")
+m: M.Yes[String] = Yes(yes)
+
+scala> m.map(_ + "?")
+res0: Functor[String] = Yes(yes?)
+```
+???
+But, it seems to work fine.
+--
+```scala
+scala> m.map(_ + "?").getOrElse("no")
+<console>:18: error: value getOrElse is not a member of Functor[String]
+       m.map(_ + "?").getOrElse("no")
+                      ^
+```
+???
+Oops. What happened.
+--
+```scala
+scala> m.map(_ + "?")
+res2: Functor[String] = Yes(yes?)
+```
+???
+#Problem 2: Return type is Functor
+
+What we want is return type polymorphism - if we call it on a
+Maybe, we want a Maybe back. Likewise for a CList.
+
+Mention Microsoft Linq: IEnumerable. Works OK for collection types,
+but you still need to call ToList() or ToArray() or whatever.
+---
+#Values
+
+```scala
+val x = 2
+val zz = "top"
+```
+???
+So, let's talk a bit about Values, Types and Kinds
+
+x and zz are values.
+--
+```scala
+val f = (i: Int) => i * 7
+```
+???
+Functions are "first class" in Scala, so they are values, too.
+--
+```scala
+def doStuff(i: Int, s: String, f: Int => Int) = {
+  f(i) + s.length
+}
+```
+```scala
+scala> doStuff(x, zz, f)
+res3: Int = 17
+```
+???
+Values are things that you can assign to variables and pass around to
+functions, etc.
+--
+```scala
+case class InCase(i: Int, s: String)
+val c = InCase(1, "this")
+```
+???
+instances of classes are values, too.
+--
+```scala
+var bah = 13
+```
+???
+As are vars.
+--
+```scala
+def meth(i: Int): Int = {i * 7}
+```
+???
+__meth__ is NOT a value. It is a method, and methods are different that functions.
+Methods can be converted to functions, and often that is done transparently,
+but in some cases you need to explicitly convert them.
+---
+#Types
+```
+scala> :t x
+Int
+
+scala>:t zz
+String
+
+scala>:t f
+Int => Int
+
+scala>:t c
+InCase
+```
+???
+So, what about types?
+
+We can use __:t__ in the REPL to inspect the type of a value.
+
+Types are a way of categorizing values. In strongly typed languages,
+we use them to tell the compiler what "types" of values are acceptable
+at various places in our code.
+
+Notice that __f__ has a Type which transforms one Type into another Type
+--
+```
+scala>:t doStuff _
+(Int, String, Int => Int) => Int
+```
+???
+doStuff, once converted to a function (note the trailing underscore),
+is a higher ordered function.
+It is a function that takes another function as an argument.
+---
+#Types
+```
+val o = Some(1)
+
+scala>:t o
+Some[Int]
+```
+???
+Sometimes the type of something isn't what we want/expect.
+In this case, we probably wanted an Option[Int], not a Some[Int].
+
+While this will often be automagically widened when and Option
+is expected, it can cause problems with type inference.
+--
+```
+val o: Option[Int] = Some(1)
+
+scala>:t o
+Option[Int]
+```
+???
+This can be remedied with explicit type ascription.
+--
+```scala
+val o = 1.some
+
+scala>:t o
+Option[Int]
+```
+???
+But libraries like Cats and Scalaz provide helpful syntax which
+is terser.
+---
+#Types
+```scala
+val mult = (x: Int, y: Int) => x * y
+```
+```
+scala>:t mult
+(Int, Int) => Int
+```
+???
+Functions with several parameters convert multiple types into
+another type.
+--
+```scala
+scala> val times5 = mult(_: Int, 5)
+times5: Int => Int = $$Lambda$2583/1674492705@4534ca0d
+
+scala> times5(3)
+res4: Int = 15
+```
+```
+scala>:t times5
+Int => Int
+```
+???
+We can partially apply a function.
+--
+```scala
+def multParam(i: Int)(s: String) = i + s.length
+```
+```
+scala>:t multParam _
+Int => (String => Int)
+```
+???
+Calling multParam with only the integer returns another
+function that takes a string and returns and integer.
+
+So, types are a way of categorizing values.
+
+---
+#Kinds
+
+```
+scala>:k Int
+Int's kind is A
+
+scala>:k String
+String's kind is A
+```
+???
+Moving on to Kinds.
+
+Kinds are a property of Types. In the REPL, we can use __:k__ to
+inspect the Kind for a Type.
+
+Kinds are a way of categorizing Types. Or,
+Kinds are to Types as Types are to Values.
+--
+```
+scala>:k Option[Int]
+Option[Int]'s kind is A
+```
+???
+Kind A indicates Types for we can create a Value.
+---
+#Kinds
+```
+scala>:k Option
+Option's kind is F[+A]
+
+scala>:k List
+List's kind is F[+A]
+
+scala>:k Either
+Either's kind is F[+A1, +A2]
+```
+???
+These are called Type Constructors, or Higher Kinded Types.  You
+give them a type (or 2 in the case of Either), and you get another
+type back.
+
+Like a function that takes another function as a parameter in
+order to give you a value is
+a higher ordered function. A Type that takes one or more Types to give
+you a Type is a Higher Kinded Type.
+
+It is the ability to abstract over these Higher Kinded Types that
+provides a solution to our problem.
+
+---
+#HKT Approach
+
+<!-- This trait is copied and pasted several times for when alternate
+instances for Either are required. If it is changed here, make
+sure to change it everywhere. -->
+```scala
+trait Functor[F[_]] {
+  def map[A, B](fa: F[A])(f: A => B): F[B]
+  def fproduct[A, B](fa: F[A])(f: A => B): F[(A, B)]
+    = map(fa)(a => (a, f(a)))
+}
+```
+???
+A trait with an abstract map() method and fproduct() defined in terms
+of map().
+
+Note the underscore in F[_]. It is saying that Functor is parameterized
+on a Type Constructor that takes one Type.
+
+Some of you may recognize this as a typeclass. The word typeclass
+comes from Haskell, but is perhaps a poor choice of naming for
+Scala, since typeclasses have nothing to do with OO classes
+or the 'class' keyword in Scala.
+
+--
+```
+scala>:k Functor
+Functor's kind is X[F[A]]
+```
+???
+So, what is the kind of Functor?
+
+---
+#Option
+
+```scala
+implicit val optionFunctor = new Functor[Option] {
+    def map[A, B](fa: Option[A])(f: A => B): Option[B] =
+      fa.map(f)
+}
+```
+???
+How do we extend a trait that is parameterized by a Type Constructor?
+
+The "trick" is that we don't extend it. We don't use inheritance, we
+create an implicit, anonymous instance of it for a particular type
+constructor?
+
+Since we're not using inheritance, anymore, we'll just go straight to
+the standard library types.
+--
+```scala
+def double[F[_]](f: F[Int])(implicit ev: Functor[F]): F[Int] =
+  ev.map(f)(_ * 2)
+```
+???
+We can create a method that takes a Functor. Note, that we simply
+parameterize the method on __any__ one parameter type constructor,
+but the __f__ parameter is constrained to F[Int] here, and we
+are requiring that the compiler be able to find proof that F has
+a Functor instance via the implicit parameter.
+
+ev could be named anything, but ev is common => evidence
+---
+#Option
+```scala
+scala> val s: Option[Int] = Some(3)
+s: Option[Int] = Some(3)
+
+scala> val n: Option[Int] = None
+n: Option[Int] = None
+
+scala> double(s)
+res0: Option[Int] = Some(6)
+
+scala> double(n)
+res1: Option[Int] = None
+```
+???
+Note that the return type is Option, not Functor
+--
+```scala
+scala> double(s).getOrElse(8)
+res2: Int = 6
+
+scala> double(n).getOrElse(8)
+res3: Int = 8
+```
+---
+#Type Constraint
+```scala
+def length[F[_]: Functor](f: F[String]): F[Int] =
+  implicitly[Functor[F]].map(f)(_.length)
+```
+???
+We can also use a type constraint to specify that F must have a
+Functor instance, which is more concise, but if we want to use
+it we need to summon the instance via __implicitly__
+--
+```scala
+scala> val ss: Option[String] = Some("string")
+ss: Option[String] = Some(string)
+
+scala> length(ss)
+res4: Option[Int] = Some(6)
+```
+---
+# Either
+```scala
+val r: Either[String, Int] = Right(3)
+val l: Either[String, Int] = Left("Oops")
+```
+???
+But, what about Either? It seems reasonable to want to be able
+to create a Functor for Either, especially since Either is now
+right biased in Scala 2.12. But, Either takes 2 type parameters, and Functor
+only works for types that take one type parameter.
+--
+```scala
+type ES[A] = Either[String, A]
+```
+???
+Remember how we partially applied the parameters to a function above?
+Well, we can do the same thing for types.
+--
+```
+scala>k: ES
+ES's kind is F[A]
+```
+???
+Which is exactly the kind we need!
+--
+```scala
+implicit val esFunctor = new Functor[ES] {
+  def map[A, B](fa: ES[A])(f: A => B) =
+    fa.map(f)
+}
+```
+```scala
+scala> double(r)
+res5: Either[String,Int] = Right(6)
+
+scala> double(l)
+res6: Either[String,Int] = Left(Oops)
+```
+???
+So, we can create a Functor for it.
+
+This works for any Either whose left is a String.
+
+But, what if I want a Functor for Either[Throwable, Int]? Do I
+need to create type aliases and Functor instances for every
+type I want on the Left?
+
+---
+#Either
+<!-- CopyPasta from above - keep them all in sych. -->
+
+
+```scala
+implicit def eitherFunctor[Z] =
+  new Functor[({type E[X] = Either[Z, X]})#E] {
+    def map[A, B](fa: Either[Z, A])(f: A => B) = fa.map(f)
+  }
+```
+???
+No, we can create an anonymous, partially applied type with a type lambda.
+
+Fortunately, there ii has simple, terse syntax.
+
+Not!
+--
+```scala
+{type E[X] = Either[Z, X]})#E
+```
+
+???
+Notice how we needed to make it an implicit def, because val's
+can't take type parameters.
+
+--
+```scala
+val rt: Either[Throwable, Int] = Right(7)
+var lt: Either[Throwable, Int] = Left(new Throwable("doh!"))
+```
+```scala
+scala> double(rt)
+res0: Either[Throwable,Int] = Right(14)
+
+scala> double(lt)
+res1: Either[Throwable,Int] = Left(java.lang.Throwable: doh!)
+
+scala> double(r)
+res2: Either[String,Int] = Right(6)
+
+scala> double(l)
+res3: Either[String,Int] = Left(Oops)
+```
+???
+But it does work.
+---
+#Either
+<!-- CopyPasta from above - keep them all in sych. -->
+
+
+
+```scala
+implicit def eitherFunctor[Z]: Functor[Either[Z, ?]] =
+  new Functor[Either[Z, ?]] {
+    def map[A, B](fa: Either[Z, A])(f: A => B) = fa.map(f)
+  }
+```
+???
+There is a compiler plugin by Erik Osheim, called Kind Projector,
+that provides a much simpler syntax for anonymous partially
+applied types.
+--
+```scala
+scala> double(rt)
+res0: Either[Throwable,Int] = Right(14)
+
+scala> double(lt)
+res1: Either[Throwable,Int] = Left(java.lang.Throwable: doh!)
+
+scala> double(r)
+res2: Either[String,Int] = Right(6)
+
+scala> double(l)
+res3: Either[String,Int] = Left(Oops)
+```
+---
+#Awkwardness
+
+
+
+
+```scala
+scala> val someString: Option[String] = Some("string")
+someString: Option[String] = Some(string)
+
+scala> implicitly[Functor[Option]].map(someString)(_ + "?")
+res4: Option[String] = Some(string?)
+```
+
+##vs
+
+```scala
+scala> someString.map(_ + "?")
+res5: Option[String] = Some(string?)
+```
+???
+You may have noticed one drawback to the HKT approach compared to
+inheritance - using it requires calling the method on the functor
+instance versus calling it directly on the object.
+
+Notice it does return the correct type, though.
+---
+#Return to Grace
+
+```scala
+object F {
+  trait Functor[F[_]] {
+    def map[A, B](fa: F[A])(f: A => B): F[B]
+    def fproduct[A, B](fa: F[A])(f: A => B): F[(A, B)]
+      = map(fa)(a => (a, f(a)))
+  }
+
+  object Functor {
+    def apply[F[_]](implicit ev: Functor[F]): Functor[F] = ev
+  }
+
+  implicit class
+  FunctorOps[F[_], A](fa: F[A])(implicit ev: Functor[F]) {
+    def map[B](f: A => B) = ev.map(fa)(f)
+    def fproduct[B](f: A => B) = ev.fproduct(fa)(f)
+  }
+}
+
+import F._
+```
+???
+There are ways to fix that.
+
+There are other ways to encode this.
+
+Note that the __Ops__ class can also provide symbolic operators.
+---
+#Using It
+```scala
+implicit val optionFunctor: Functor[Option] =
+  new Functor[Option] {
+      def map[A, B](fa: Option[A])(f: A => B): Option[B] =
+        fa.map(f)
+  }
+```
+???
+Create our instance.
+
+Note that it is a good idea to explicitly state the type of your
+value. This prevents the compiler from inferring some odd types.
+--
+```scala
+scala> val someString: Option[String] = Some("string")
+someString: Option[String] = Some(string)
+
+scala> someString.fproduct(_ + "?")
+res1: Option[(String, String)] = Some((string,string?))
+```
+???
+Now we can call fproduct directly on an option
+--
+```scala
+scala> Functor[Option].map(someString)(_ + "!")
+res2: Option[String] = Some(string!)
+```
+
+???
+But what about map? Since option already has a map method, it will
+be used preferentially by the compiler.
+
+If we really need to call the Functor instance of map, we can make
+use of the apply instance on the companion object.
+
+All this requires a lot of boilerplate. Another compiler plugin,
+Simulacrum by Michael Pilquist reduces the boilerplate.
+---
+#References
+
+Slides available at [https://toddburnside.github.io](https://toddburnside.github.io)
+
+__Higher-kinded types: the difference between giving up, and moving forward__
+by Stephen Compall on the TypeLevel Blog
+[https://typelevel.org/blog/2016/08/21/hkts-moving-forward.html](https://typelevel.org/blog/2016/08/21/hkts-moving-forward.html)
+
+__Introduction to Typeclasses in Scala__ by Rob Norris
+[http://tpolecat.github.io/2013/10/12/typeclass.html](http://tpolecat.github.io/2013/10/12/typeclass.html)
+
+__Kind Projector__ by Erik Osheim
+[https://github.com/non/kind-projector](https://github.com/non/kind-projector)
+
+__Simulacrum__ by Michael Pilquist
+[https://github.com/mpilquist/simulacrum](https://github.com/mpilquist/simulacrum)
+???
+Rob also has a post on a way of getting return type polymorphism via inheritance called
+__Returning the "Current" Type in Scala__. It describes F-Bounded Types, and
+why they are prolematic.
+ </textarea>
+    <script src="remark-latest.min.js">
+    </script>
+    <script>
+      var slideshow = remark.create({
+          highlightLanguage: 'scala',
+          highlightStyle: 'monokai'
+      });
+    </script>
+  </body>
+</html>
