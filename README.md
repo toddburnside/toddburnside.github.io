@@ -1,6 +1,7 @@
 It's pretty sparse here at the moment...
 
-##Presentations
+Presentations
+=============
 
 ### Higher Kinded Types? Why Should I Care?
 At the [PDXScala Meetup](https://www.meetup.com/PDXScala/) on 17 October, 2017. Slides are available 
